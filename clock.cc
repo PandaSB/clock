@@ -108,9 +108,9 @@ void *thread_display(void *arg)
 	Color color4(127,127,0);
 	Color color5(127,127,127);
 
-	const char *bdf_font1_file = "/usr/share/clock/fonts/7x13B.bdf";
-	const char *bdf_font2_file = "/usr/share/clock/fonts/4x6.bdf";
-	const char *bdf_font3_file = "/usr/share/clock/fonts/6x12.bdf";
+	const char *bdf_font1_file = "/usr/lib/fonts/7x13B.bdf";
+	const char *bdf_font2_file = "/usr/lib/fonts/4x6.bdf";
+	const char *bdf_font3_file = "/usr/lib/fonts/6x12.bdf";
 
 	int x_wifi_orig = 1;
 	int y_wifi_orig = 1;
