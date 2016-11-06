@@ -17,6 +17,11 @@
 #include <pthread.h>
 
 #include <curl/curl.h>
+#include <libconfig.h>
+
+#define CONFIGFILE       "clock.conf"
+#define CONFIGFILE_ETC   "/etc/clock.conf"
+#define CONFIGFILE_LOCAL ".clock/clock.conf"
 
 #ifndef IW_NAME
 #define IW_NAME "wlan0"
@@ -26,6 +31,12 @@ using namespace rgb_matrix;
 
 char display_data[5][256] = { 0 } ;
 pthread_mutex_t display_mutex;
+
+char wifi_ssid[256];
+char wifi_passwd[256] ;
+char imap_url[256];
+char imap_login[256];
+char imap_passwd[256] ; 
 
 
 struct curl_string {
@@ -217,17 +228,17 @@ int unreadmail (void)
 {
 	CURL *curl;
 	CURLcode res = CURLE_OK;
-	int count = 0 ; 	
+	int count = 0 ;
 	curl = curl_easy_init();
 	if(curl) {
 		struct curl_string s;
 		curl_init_string(&s);
-		/* Set username and password */
-		curl_easy_setopt(curl, CURLOPT_USERNAME, "<login>");
-		curl_easy_setopt(curl, CURLOPT_PASSWORD, "<password>");
+		/* Set username and password*/
+		curl_easy_setopt(curl, CURLOPT_USERNAME, imap_login);
+		curl_easy_setopt(curl, CURLOPT_PASSWORD, imap_passwd);
 
 		/* This is mailbox folder to select */
-		curl_easy_setopt(curl, CURLOPT_URL, "imap/<ip>/Inbox");
+		curl_easy_setopt(curl, CURLOPT_URL, imap_url);
 
 		/* Set the SEARCH command specifing what we want to search for. Note that
 		 * this can contain a message sequence set and a number of search criteria
@@ -244,13 +255,13 @@ int unreadmail (void)
     		// printf("CURL STRING : %s\n", s.ptr);
 
 		char * ptroffset = s.ptr ;
-		count = 0 ; 
+		count = 0 ;
 		while ( strstr  (ptroffset," ") != NULL )
 		{
-			ptroffset =  strstr  (ptroffset," ")  + 1 ; 
-			count ++ ; 
+			ptroffset =  strstr  (ptroffset," ")  + 1 ;
+			count ++ ;
 		}
-		if (count > 0) count -- ; 
+		if (count > 0) count -- ;
     		free(s.ptr);
 
 		/* Check for errors */
@@ -261,7 +272,7 @@ int unreadmail (void)
 		/* Always cleanup */
 		curl_easy_cleanup(curl);
   	}
-	if (res != 0) count = 0 ; 
+	if (res != 0) count = 0 ;
 	return (int)count ;
 
 }
@@ -270,6 +281,40 @@ int main(int argc, char *argv[]) {
 
 	RGBMatrix::Options led_options ;
         rgb_matrix::RuntimeOptions runtime;
+
+	config_t cfg;
+        config_setting_t *root_cfg, *wifi_cfg , *imap_cfg;
+	const char * envvar ; 
+
+
+	config_init (&cfg);
+	if (!config_read_file(&cfg, CONFIGFILE_LOCAL)) {
+		if (!config_read_file(&cfg, CONFIGFILE_ETC)) {
+	                if (!config_read_file(&cfg, CONFIGFILE)) {
+				fprintf(stderr, "%s:%d - %s\n", config_error_file(&cfg),
+				config_error_line(&cfg), config_error_text(&cfg));
+				config_destroy(&cfg);
+				exit ( 1 );
+			}
+		}
+	}
+
+	root_cfg = config_root_setting(&cfg);
+	wifi_cfg = config_setting_get_member(root_cfg, "wifi");
+        imap_cfg = config_setting_get_member(root_cfg, "imap");
+
+	config_setting_lookup_string(wifi_cfg, "ssid", &envvar); strcpy (wifi_ssid,envvar);
+        config_setting_lookup_string(wifi_cfg, "passwd", &envvar);strcpy (wifi_passwd,envvar);
+
+        config_setting_lookup_string(imap_cfg, "url", &envvar);strcpy(imap_url,envvar);
+        config_setting_lookup_string(imap_cfg, "login", &envvar);strcpy(imap_login,envvar);
+        config_setting_lookup_string(imap_cfg, "passwd", &envvar);strcpy(imap_passwd,envvar);
+
+
+	fprintf (stderr, "WIFI : %s - %s \n",wifi_ssid,wifi_passwd);
+        fprintf (stderr, "IMAP : %s - %s - %s \n",imap_url,imap_login,imap_passwd);
+
+	config_destroy(&cfg);
 
 	led_options.chain_length = 2;
 	runtime.drop_privileges = 1;
@@ -291,12 +336,7 @@ int main(int argc, char *argv[]) {
 		perror("pthread_create");
 		return EXIT_FAILURE;
     	}
-/*
-	if (pthread_join(thread1, NULL)) {
-		perror("pthread_join");
-		return EXIT_FAILURE;
-	}
-*/
+
 	retval = init_thermometer(devPath, dev);
 	if (retval != 0) {
 		fprintf (stderr , "Warning : Enable to read temp \n");
