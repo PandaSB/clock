@@ -17,7 +17,7 @@ all : $(BINARIES)
 $(RGB_LIBRARY): FORCE
 	$(MAKE) -C $(RGB_LIBDIR)
 	
-clock : clock.o $(RGB_LIBRARY)
+clock : clock.o
 	$(CXX) $< -o $@ $(LDFLAGS)
 
 
@@ -32,7 +32,5 @@ clean:
 
 install: $(BINARIES)
 	install -m 755 $(BINARIES)  /usr/bin
-	mkdir -p /usr/share/clock/fonts
-	install -m 666 ../fonts/*   /usr/share/clock/fonts
 FORCE:
 .PHONY: FORCE
