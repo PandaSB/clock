@@ -65,7 +65,7 @@ float read_thermometer(char *dpath, int scale)
 {
 	char buf[256];     // Data from device
 	char tmpData[6];   // Temp C * 1000 reported by device
-	float tempC;
+	float tempC = 0;
 	ssize_t numRead;
 
 	int fd = open(dpath, O_RDONLY);
@@ -217,7 +217,7 @@ int unreadmail (void)
 {
 	CURL *curl;
 	CURLcode res = CURLE_OK;
-	int count ; 	
+	int count = 0 ; 	
 	curl = curl_easy_init();
 	if(curl) {
 		struct curl_string s;
@@ -268,14 +268,21 @@ int unreadmail (void)
 
 int main(int argc, char *argv[]) {
 
-        RGBMatrix *pcanvas = rgb_matrix::CreateMatrixFromFlags(&argc, &argv);
+	RGBMatrix::Options led_options ;
+        rgb_matrix::RuntimeOptions runtime;
+
+	led_options.chain_length = 2;
+	runtime.drop_privileges = 1;
+
+
+        RGBMatrix *pcanvas = rgb_matrix::CreateMatrixFromFlags(&argc, &argv,&led_options,&runtime);
 
 
 	int  tempScale = 'C'; // Scale in degrees  C or F
 	char dev[16];       // Dev ID for DS18B20 thermometer
 	char devPath[128];  // Path to device
-	int retval;
-	float tTemp;
+	float tTemp = 0;
+	int retval ;  
 	int unread; 
 
 	pthread_t thread1;
@@ -291,7 +298,9 @@ int main(int argc, char *argv[]) {
 	}
 */
 	retval = init_thermometer(devPath, dev);
-
+	if (retval != 0) {
+		fprintf (stderr , "Warning : Enable to read temp \n");
+	}
 
 	int opt;
 	while ((opt = getopt(argc, argv, "x:y:f:C:b:")) != -1) {
