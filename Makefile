@@ -1,6 +1,6 @@
 CFLAGS=-Wall -O3 -g
 CXXFLAGS=$(CFLAGS)
-OBJECTS=clock.o
+OBJECTS=clock.o smbus.o
 BINARIES=clock
 
 # Where our library resides. You mostly only need to change the
@@ -18,15 +18,15 @@ all : $(BINARIES)
 $(RGB_LIBRARY): FORCE
 	$(MAKE) -C $(RGB_LIBDIR)
 	
-clock : clock.o
-	$(CXX) $< -o $@ $(LDFLAGS)
+clock : $(OBJECTS)
+	$(CXX) -o $@ $(OBJECTS) $(LDFLAGS)
 
 
 %.o : %.cc
 	$(CXX) -I$(RGB_INCDIR) $(CXXFLAGS) -c -o $@ $<
 
 %.o : %.c
-	$(CC) -I$(RGB_INCDIR) $(CFLAGS) -c -o $@ $<
+	$(CXX) -I$(RGB_INCDIR) $(CFLAGS) -c -o $@ $<
 
 clean:
 	rm -f $(OBJECTS) $(BINARIES)

@@ -4,7 +4,7 @@
 #include <sys/socket.h>
 #include <linux/wireless.h>
 #include <sys/ioctl.h>
-
+#include <linux/i2c-dev.h>		//Needed for I2C port
 
 #include <getopt.h>
 #include <stdio.h>
@@ -19,6 +19,8 @@
 #include <curl/curl.h>
 #include <libconfig.h>
 
+#include "smbus.h"
+
 #define CONFIGFILE       "clock.conf"
 #define CONFIGFILE_ETC   "/etc/clock.conf"
 #define CONFIGFILE_LOCAL ".clock/clock.conf"
@@ -27,9 +29,15 @@
 #define IW_NAME "wlan0"
 #endif
 
+#define BMP180_SENSOR
+//#define DS18B20_SENSOR
+
+const unsigned char BMP180_OVERSAMPLING_SETTING = 3;
+const unsigned char BMP180_BUS = 1;
+
 using namespace rgb_matrix;
 
-char display_data[5][256] = { 0 } ;
+char display_data[6][256] = { 0 } ;
 pthread_mutex_t display_mutex;
 
 char wifi_ssid[256];
@@ -43,6 +51,25 @@ struct curl_string {
   char *ptr;
   size_t len;
 };
+
+#ifdef BMP180_SENSOR
+short int           ac1;
+short int           ac2;
+short int           ac3;
+unsigned short int  ac4;
+unsigned short int  ac5;
+unsigned short int  ac6;
+short int            b1;
+short int            b2;
+short int            mb;
+short int            mc;
+short int            md;
+
+int                  b5;
+
+unsigned int temperature, pressure;
+#endif 
+
 
 static int usage(const char *progname) {
 	fprintf(stderr, "usage: %s [options]\n", progname);
@@ -88,11 +115,13 @@ float read_thermometer(char *dpath, int scale)
 		strncpy(tmpData, strstr(buf, "t=") + 2, 5);
 		tempC = strtof(tmpData, NULL);
 		switch(toupper(scale)){
-			case 'C':          //Convert to Celcius
+			case 'C':
+				//Convert to Celcius
 				tempC = tempC / 1000;
 				//printf("Temp: %.3f C  ", tempC);
 				break;
-			case 'F':          // Convert to Farenheit
+			case 'F':
+				// Convert to Farenheit
 				tempC =  ((tempC / 1000) * (9 / 5)) + 32;
 				//printf("%.3f F\n\n", tempC);
 				break;
@@ -104,6 +133,169 @@ float read_thermometer(char *dpath, int scale)
 	return tempC;
 }
 
+#ifdef BMP180_SENSOR
+
+int BMP180_i2c_Begin (void) {
+	int file_i2c;
+	char filename_i2c[256] = {0};
+
+	sprintf( filename_i2c , "/dev/i2c-%d",BMP180_BUS);
+	if ((file_i2c = open(filename_i2c, O_RDWR)) < 0)
+	{
+		//ERROR HANDLING: you can check errno to see what went wrong
+		fprintf(stderr,"Failed to open the i2c bus %s : error : %d\n",filename_i2c,file_i2c);
+		return -1;
+	}
+
+	int addr = 0x77;          //<<<<<The I2C address of the slave
+	if (ioctl(file_i2c, I2C_SLAVE, addr) < 0)
+	{
+		fprintf(stderr,"Failed to acquire bus access and/or talk to slave.\n");
+		//ERROR HANDLING; you can check errno to see what went wrong
+		return -1;
+	}
+
+	return file_i2c ;
+}
+
+//Write a byte to the BMP085
+void BMP180_i2c_Write_Byte(int fd, __u8 address, __u8 value)
+{
+   if (i2c_smbus_write_byte_data(fd, address, value) < 0) {
+      close(fd);
+      exit(1);
+   }
+}
+
+long BMP180_i2c_Read_Int(int fd, unsigned char address)
+{
+	long res = i2c_smbus_read_word_data(fd, address);
+	if (res < 0) {
+		close(fd);
+		exit(1);
+	}
+
+	// Convert result to 16 bits and swap bytes
+	res = ((res<<8) & 0xFF00) | ((res>>8) & 0xFF);
+	return res;
+}
+
+// Read a block of data BMP180
+void BMP180_i2c_Read_Block(int fd, unsigned char address, unsigned char length, unsigned char  *values)
+{
+	if(i2c_smbus_read_i2c_block_data(fd, address,length,values)<0) {
+		close(fd);
+		exit(1);
+	}
+}
+
+
+void BMP180_Calibration()
+{
+	int fd = BMP180_i2c_Begin();
+	if ( fd >= 0) {
+		ac1 = BMP180_i2c_Read_Int(fd,0xAA);
+		ac2 = BMP180_i2c_Read_Int(fd,0xAC);
+		ac3 = BMP180_i2c_Read_Int(fd,0xAE);
+		ac4 = BMP180_i2c_Read_Int(fd,0xB0);
+		ac5 = BMP180_i2c_Read_Int(fd,0xB2);
+		ac6 = BMP180_i2c_Read_Int(fd,0xB4);
+		b1  = BMP180_i2c_Read_Int(fd,0xB6);
+		b2  = BMP180_i2c_Read_Int(fd,0xB8);
+		mb  = BMP180_i2c_Read_Int(fd,0xBA);
+		mc  = BMP180_i2c_Read_Int(fd,0xBC);
+		md  = BMP180_i2c_Read_Int(fd,0xBE);
+		close(fd);
+	}
+}
+
+unsigned int BMP180_ReadUT()
+{
+	unsigned int ut = 0;
+	int fd = BMP180_i2c_Begin();
+        if ( fd >= 0) {
+		// Write 0x2E into Register 0xF4
+		// This requests a temperature reading
+		BMP180_i2c_Write_Byte(fd,0xF4,0x2E);
+		// Wait at least 4.5ms
+		usleep(5000);
+		// Read the two byte result from address 0xF6
+		ut = BMP180_i2c_Read_Int(fd,0xF6);
+		// Close the i2c file
+		close (fd);
+	}
+	return ut;
+}
+
+
+// Read the uncompensated pressure value
+unsigned int BMP180_ReadUP()
+{
+	unsigned int up = 0;
+	int fd = BMP180_i2c_Begin();
+        if ( fd >= 0) {
+		// Write 0x34+(BMP180_OVERSAMPLING_SETTING<<6) into register 0xF4
+		// Request a pressure reading w/ oversampling setting
+		BMP180_i2c_Write_Byte(fd,0xF4,0x34 + (BMP180_OVERSAMPLING_SETTING<<6));
+		// Wait for conversion, delay time dependent on oversampling setting
+		usleep((2 + (3<<BMP180_OVERSAMPLING_SETTING)) * 1000);
+		// Read the three byte result from 0xF6
+		// 0xF6 = MSB, 0xF7 = LSB and 0xF8 = XLSB
+   		unsigned char values[3];
+		BMP180_i2c_Read_Block(fd, 0xF6, 3, values);
+		up = (((unsigned int) values[0] << 16) | ((unsigned int) values[1] << 8) | (unsigned int) values[2]) >> (8-BMP180_OVERSAMPLING_SETTING);
+	}
+	return up;
+}
+
+
+unsigned int BMP180_GetPressure(unsigned int up)
+{
+	int x1, x2, x3, b3, b6, p;
+	unsigned int b4, b7;
+
+	b6 = b5 - 4000;
+	// Calculate B3
+	x1 = (b2 * (b6 * b6)>>12)>>11;
+	x2 = (ac2 * b6)>>11;
+	x3 = x1 + x2;
+	b3 = (((((int)ac1)*4 + x3)<<BMP180_OVERSAMPLING_SETTING) + 2)>>2;
+
+	// Calculate B4
+	x1 = (ac3 * b6)>>13;
+	x2 = (b1 * ((b6 * b6)>>12))>>16;
+	x3 = ((x1 + x2) + 2)>>2;
+	b4 = (ac4 * (unsigned int)(x3 + 32768))>>15;
+
+	b7 = ((unsigned int)(up - b3) * (50000>>BMP180_OVERSAMPLING_SETTING));
+	if (b7 < 0x80000000) {
+		p = (b7<<1)/b4;
+	} else {
+		p = (b7/b4)<<1;
+	}
+	x1 = (p>>8) * (p>>8);
+	x1 = (x1 * 3038)>>16;
+	x2 = (-7357 * p)>>16;
+	p += (x1 + x2 + 3791)>>4;
+
+	return p;
+}
+
+// Calculate temperature given uncalibrated temperature
+// Value returned will be in units of 0.1 deg C
+unsigned int BMP180_GetTemperature(unsigned int ut)
+{
+	int x1, x2;
+
+	x1 = (((int)ut - (int)ac6)*(int)ac5) >> 15;
+	x2 = ((int)mc << 11)/(x1 + md);
+	b5 = x1 + x2;
+
+	unsigned int result = ((b5 + 8)>>4);
+
+	return result;
+}
+#endif 
 
 void *thread_display(void *arg)
 {
@@ -118,6 +310,7 @@ void *thread_display(void *arg)
 	Color color3(127, 0, 255);
 	Color color4(127,127,0);
 	Color color5(127,127,127);
+	Color color6(127,80,80);
 
 	const char *bdf_font1_file = "/usr/lib/fonts/7x13B.bdf";
 	const char *bdf_font2_file = "/usr/lib/fonts/4x6.bdf";
@@ -127,8 +320,10 @@ void *thread_display(void *arg)
 	int y_wifi_orig = 1;
 	int x_orig = 4;
 	int y_orig = 8;
-	int x_temp_orig =34;
+	int x_temp_orig =1;
 	int y_temp_orig = 21;
+	int x_pressure_orig = 1;
+	int y_pressure_orig = 21;
 	int x_date_orig = 2;
 	int y_date_orig = 21;
 	int brightness = 50;
@@ -169,7 +364,11 @@ void *thread_display(void *arg)
                 tstruct = *localtime(&now);
 
 		pthread_mutex_lock(&display_mutex);
-                strftime(display_data[0], sizeof(display_data[0]), "%H:%M:%S", &tstruct);
+		if ((tstruct.tm_sec & 1) == 0 ) {
+                	strftime(display_data[0], sizeof(display_data[0]), "%H:%M:%S", &tstruct);
+		} else {
+                        strftime(display_data[0], sizeof(display_data[0]), "%H %M %S", &tstruct);
+		}
                 strftime(display_data[4], sizeof(display_data[4]), "%d/%m/%Y", &tstruct);
 
 		canvas->Clear();
@@ -182,7 +381,15 @@ void *thread_display(void *arg)
 		}
 		if ((loop >= 3) && ( loop < 9))
 		{
+#ifdef BMP180_SENSOR
+			if ( loop >= 6) {
+	                        rgb_matrix::DrawText(canvas, font3, x_pressure_orig, y_pressure_orig + font3.baseline(), color6, display_data[5]);
+			} else {
+	                        rgb_matrix::DrawText(canvas, font3, x_temp_orig, y_temp_orig + font3.baseline(), color3, display_data[2]);
+			}
+#else
 			rgb_matrix::DrawText(canvas, font3, x_temp_orig, y_temp_orig + font3.baseline(), color3, display_data[2]);
+#endif
 		} else {
                         rgb_matrix::DrawText(canvas, font3, x_date_orig, y_date_orig + font3.baseline(), color5, display_data[4]);
 		}
@@ -327,6 +534,7 @@ int main(int argc, char *argv[]) {
 	char dev[16];       // Dev ID for DS18B20 thermometer
 	char devPath[128];  // Path to device
 	float tTemp = 0;
+	float tPressure = 0;
 	int retval ;  
 	int unread; 
 
@@ -351,8 +559,18 @@ int main(int argc, char *argv[]) {
 	}
 
 	do {
-  
+
+#ifdef BMP180_SENSOR
+		BMP180_Calibration();
+		temperature = BMP180_GetTemperature(BMP180_ReadUT());
+		tTemp = ((float) (temperature)) / 10 ;
+		pressure = BMP180_GetPressure(BMP180_ReadUP());
+		tPressure =  ((float) pressure ) / 100 ;
+#endif
+
+#ifdef DS18B20_SENSOR
     		tTemp = read_thermometer(devPath, tempScale);
+#endif
 		unread = unreadmail ();
 
 		int sockfd;
@@ -393,6 +611,7 @@ int main(int argc, char *argv[]) {
 
 		pthread_mutex_lock(&display_mutex);
                 sprintf (display_data[2],"%.1f%c",tTemp, tempScale);
+		sprintf (display_data[5],"%.1f%s",tPressure, "hPa");
 		sprintf (display_data[1],"WIFI : %s",essid);
 		sprintf (display_data[3],"EMAIL: %d ",unread);
 		pthread_mutex_unlock(&display_mutex);
