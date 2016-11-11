@@ -584,30 +584,18 @@ int main(int argc, char *argv[]) {
 #ifdef CLEAR_UPDATED
 		req.u.data.flags = 1;
 #endif
+                char essid[256];
+                memset (essid,0,256);
+                req.u.essid.pointer = (char *) essid ;
 
 		/* Any old socket will do, and a datagram socket is pretty cheap */
-		if((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
-			perror("Could not create simple datagram socket");
-			exit(EXIT_FAILURE);
-		}
-
-		/* Perform the ioctl */
-		if(ioctl(sockfd, SIOCGIWSTATS, &req) == -1) {
-			perror("Error performing SIOCGIWSTATS on " IW_NAME);
+		if((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) != -1) {
+			/* Perform the ioctl */
+			ioctl(sockfd, SIOCGIWSTATS, &req);
+			/* Perform the ioctl */
+			ioctl(sockfd, SIOCGIWESSID , &req); 
 			close(sockfd);
-			exit(EXIT_FAILURE);
 		}
-
-		char essid[256];
-		memset (essid,0,256);
-		req.u.essid.pointer = (char *) essid ;
-		/* Perform the ioctl */
-		if(ioctl(sockfd, SIOCGIWESSID , &req) == -1) {
-			perror("Error performing SIOCGIWSTATS on " IW_NAME);
-			close(sockfd);
-			exit(EXIT_FAILURE);
-		}
-		close(sockfd);
 
 		pthread_mutex_lock(&display_mutex);
                 sprintf (display_data[2],"%.1f%c",tTemp, tempScale);
